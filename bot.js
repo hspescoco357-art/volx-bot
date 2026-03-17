@@ -24,123 +24,111 @@ let admins = fs.existsSync(ADMINS_FILE) ? JSON.parse(fs.readFileSync(ADMINS_FILE
 
 const save = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-const safeSend = (ctx, text, extra = {}) => {
-    return ctx.reply(text, extra).catch(() => console.log("Erro: Usuário bloqueou o bot."));
-};
+// --- MIDDLEWARE DE PROTEÇÃO (BAN E CASTIGO) ---
+bot.use((ctx, next) => {
+    const id = ctx.from?.id;
+    if (!id) return next();
+    if (users[id]?.banido) return; // Se banido, o bot ignora tudo
+    if (users[id]?.castigo && users[id].castigo > Date.now()) {
+        const resto = Math.round((users[id].castigo - Date.now()) / 60000);
+        return ctx.reply(`⏳ Você está de castigo! Faltam ${resto} min.`).catch(() => {});
+    }
+    return next();
+});
 
-// --- VERIFICAÇÃO DE CARGOS ---
-const isOwner = (id) => id === OWNER_ID;
-const isAdmin = (id) => admins.includes(id) || id === OWNER_ID;
+// --- COMANDOS DE DONO (MODERAÇÃO) ---
 
-// --- COMANDOS EXCLUSIVOS DO DONO ---
-
-bot.command('admin', (ctx) => {
-    if (!isOwner(ctx.from.id)) return;
+bot.command('ban', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
     const target = parseInt(ctx.payload);
-    if (!target) return ctx.reply("❌ Use: /admin [ID]");
-    if (!admins.includes(target)) {
-        admins.push(target);
-        save(ADMINS_FILE, admins);
-        ctx.reply(`✅ Usuário ${target} agora é ADMIN.`);
+    if (!target || !users[target]) return ctx.reply("❌ Use: /ban [ID]");
+    users[target].banido = true;
+    save(DB_FILE, users);
+    ctx.reply(`🚫 Usuário ${target} foi banido permanentemente.`);
+});
+
+bot.command('unban', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const target = parseInt(ctx.payload);
+    if (!target || !users[target]) return ctx.reply("❌ Use: /unban [ID]");
+    users[target].banido = false;
+    save(DB_FILE, users);
+    ctx.reply(`✅ Usuário ${target} foi desbanido.`);
+});
+
+bot.command('castigo', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const [id, min] = ctx.payload.split(' ');
+    if (!id || !min) return ctx.reply("❌ Use: /castigo [ID] [MINUTOS]");
+    users[id].castigo = Date.now() + (parseInt(min) * 60000);
+    save(DB_FILE, users);
+    ctx.reply(`🔇 Usuário ${id} em silêncio por ${min} minutos.`);
+});
+
+bot.command('uncastigo', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const target = parseInt(ctx.payload);
+    if (!target || !users[target]) return ctx.reply("❌ Use: /uncastigo [ID]");
+    users[target].castigo = 0;
+    save(DB_FILE, users);
+    ctx.reply(`🔊 Castigo removido do usuário ${target}.`);
+});
+
+// --- COMANDOS DE ADMIN (FIX DO DELMOD) ---
+
+bot.command('delmod', (ctx) => {
+    const id = ctx.from.id;
+    if (id !== OWNER_ID && !admins.includes(id)) return;
+    
+    const modId = ctx.payload.toUpperCase();
+    if (!modId) return ctx.reply("❌ Use: /delmod [CÓDIGO]");
+    
+    const index = mods.findIndex(m => m.id === modId);
+    if (index > -1) {
+        mods.splice(index, 1); // Remove da lista
+        save(MODS_FILE, mods); // Salva a lista limpa
+        ctx.reply(`🗑️ Mod \`${modId}\` removido com sucesso.`);
+    } else {
+        ctx.reply("❌ Código não encontrado.");
     }
 });
 
-bot.command('unadmin', (ctx) => {
-    if (!isOwner(ctx.from.id)) return;
-    const target = parseInt(ctx.payload);
-    admins = admins.filter(id => id !== target);
-    save(ADMINS_FILE, admins);
-    ctx.reply(`❌ Usuário ${target} removido dos ADMINS.`);
-});
-
-bot.command('aviso', async (ctx) => {
-    if (!isOwner(ctx.from.id)) return;
-    const msg = ctx.payload;
-    if (!msg) return ctx.reply("❌ Digite o texto: /aviso [mensagem]");
-    
-    const allUsers = Object.keys(users);
-    ctx.reply(`📢 Enviando aviso para ${allUsers.length} usuários...`);
-    
-    for (const id of allUsers) {
-        try {
-            await bot.telegram.sendMessage(id, `📢 *AVISO VOLX CHEATS*\n\n${msg}`, { parse_mode: 'Markdown' });
-        } catch (e) { console.log(`Falha ao avisar ${id}`); }
-    }
-    ctx.reply("✅ Aviso enviado!");
-});
-
-// --- COMANDOS DE ADMIN (ADICIONAR MODS / USERS) ---
-
+// --- PAINEL ATUALIZADO NO /COMANDS ---
 bot.command('comands', (ctx) => {
-    if (!isAdmin(ctx.from.id)) return;
+    const id = ctx.from.id;
+    if (id !== OWNER_ID && !admins.includes(id)) return;
+    
     let menu = `👑 *PAINEL ADMINISTRATIVO*\n\n` +
-               `/enviar - Adicionar novo mod\n` +
-               `/users - Ver usuários\n` +
-               `/delmod [ID] - Apagar mod\n`;
-    if (isOwner(ctx.from.id)) menu += `/aviso - Mensagem global\n/admin [ID] - Add admin\n/unadmin [ID] - Remove admin`;
-    safeSend(ctx, menu, { parse_mode: 'Markdown' });
+               `/enviar - Add mod\n` +
+               `/users - Lista de IDs\n` +
+               `/delmod [ID] - Apagar da lista\n`;
+    
+    if (id === OWNER_ID) {
+        menu += `\n🛡️ *MODERAÇÃO (DONO)*\n` +
+                `/ban /unban [ID]\n` +
+                `/castigo /uncastigo [ID] [min]\n` +
+                `/aviso [texto] - Global\n` +
+                `/admin /unadmin [ID]`;
+    }
+    ctx.reply(menu, { parse_mode: 'Markdown' });
 });
 
-bot.command('users', (ctx) => {
-    if (!isAdmin(ctx.from.id)) return;
-    let msg = "👥 *RELATÓRIO DE USUÁRIOS*\n\n";
-    Object.entries(users).forEach(([id, u]) => {
-        msg += `👤 ${u.nome} | ID: \`${id}\` | Refs: ${u.ind}\n`;
-    });
-    safeSend(ctx, msg, { parse_mode: 'Markdown' });
-});
-
-bot.command('enviar', (ctx) => {
-    if (!isAdmin(ctx.from.id)) return;
-    ctx.session = { step: 'WAITING_CONTENT' };
-    safeSend(ctx, "📤 Envie o **ARQUIVO** ou **LINK**:");
-});
-
-// --- COMANDOS PÚBLICOS (START, LINK, RANKING, MODS) ---
-// (Mantenha igual ao código anterior para economizar espaço aqui)
+// ... (Mantenha o restante das funções de /start, /mods e bot.on igual ao anterior)
 bot.start((ctx) => {
     const id = ctx.from.id;
     if (!users[id]) {
-        users[id] = { nome: ctx.from.first_name, ind: 0 };
+        users[id] = { nome: ctx.from.first_name, ind: 0, banido: false, castigo: 0 };
         save(DB_FILE, users);
     }
-    safeSend(ctx, `👋 Olá ${ctx.from.first_name}! Bem-vindo ao *VOLX CHEATS*`, { parse_mode: 'Markdown' });
+    ctx.reply(`👋 Olá ${ctx.from.first_name}! Bem-vindo ao *VOLX CHEATS*`, { parse_mode: 'Markdown' });
 });
 
 bot.command(['mods', 'att'], (ctx) => {
-    if (mods.length === 0) return safeSend(ctx, "📦 Sem mods.");
+    if (mods.length === 0) return ctx.reply("📦 Nenhum mod disponível.");
     let msg = "📦 *CATÁLOGO DE MODS*\n\n";
     mods.forEach(m => msg += `🔹 *${m.description}*\nID: \`${m.id}\`\n\n`);
-    safeSend(ctx, msg, { parse_mode: 'Markdown' });
+    ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-bot.hears(/^VOLX-[A-Z0-9]{4}$/i, (ctx) => {
-    const mod = mods.find(m => m.id === ctx.message.text.toUpperCase());
-    if (!mod) return;
-    if (mod.type === 'file') {
-        ctx.replyWithDocument(mod.content, { caption: `✅ Mod: ${mod.description}` }).catch(() => {});
-    } else {
-        safeSend(ctx, `🔗 *Link:* ${mod.content}`);
-    }
-});
-
-// Lógica de receber mod (Admin)
-bot.on(['document', 'video', 'audio', 'text'], async (ctx, next) => {
-    if (!ctx.session || !isAdmin(ctx.from.id) || ctx.message.text?.startsWith('/')) return next();
-    if (ctx.session.step === 'WAITING_CONTENT') {
-        const fileId = ctx.message.document?.file_id || ctx.message.video?.file_id || ctx.message.audio?.file_id;
-        ctx.session.newMod = { id: 'VOLX-'+Math.random().toString(36).substr(2,4).toUpperCase(), content: fileId || ctx.message.text, type: fileId ? 'file' : 'link' };
-        ctx.session.step = 'WAITING_DESC';
-        return safeSend(ctx, "📝 Digite a **DESCRIÇÃO**:");
-    }
-    if (ctx.session.step === 'WAITING_DESC') {
-        ctx.session.newMod.description = ctx.message.text;
-        mods.push(ctx.session.newMod);
-        save(MODS_FILE, mods);
-        safeSend(ctx, `✅ MOD CADASTRADO! ID: \`${ctx.session.newMod.id}\``, { parse_mode: 'Markdown' });
-        ctx.session = null;
-    }
-});
-
-bot.launch().then(() => console.log("🚀 VOLX ATUALIZADO!"));
+bot.launch().then(() => console.log("🚀 VOLX ATUALIZADO COM MODERAÇÃO!"));
 
