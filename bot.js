@@ -3,7 +3,6 @@ const fs = require('fs');
 const http = require('http');
 
 // --- SISTEMA PARA MANTER ONLINE NA RENDER ---
-// Isso cria um servidor básico na porta 8080 para a Render não "matar" o bot.
 http.createServer((req, res) => {
   res.write('VOLX BOT ONLINE');
   res.end();
@@ -32,48 +31,35 @@ const generateModID = () => {
     return 'VOLX-' + code;
 };
 
-// --- COMANDOS DE DONO (PRIVADOS) ---
+// --- TRATAMENTO DE ERROS (O ESCUDO) ---
+const safeSend = (ctx, text, extra = {}) => {
+    return ctx.reply(text, extra).catch(err => console.log(`Erro ao enviar: Usuário bloqueou o bot.`));
+};
+
+// --- COMANDOS DE DONO ---
 
 bot.command('comands', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
-    ctx.reply(`👑 *PAINEL DO DONO VOLX*\n\n` +
+    safeSend(ctx, `👑 *PAINEL DO DONO VOLX*\n\n` +
               `/enviar - Adicionar novo mod\n` +
               `/users - Lista detalhada de usuários\n` +
               `/stats - Ver números do bot\n` +
-              `/delmod [ID] - Apagar um mod\n` +
-              `/aviso [texto] - Enviar aviso para todos`, { parse_mode: 'Markdown' });
+              `/delmod [ID] - Apagar um mod`, { parse_mode: 'Markdown' });
 });
 
 bot.command('users', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
     let msg = "👥 *RELATÓRIO DE USUÁRIOS*\n\n";
     Object.entries(users).forEach(([id, u]) => {
-        msg += `👤 *Nome:* ${u.nome}\n` +
-               `🔗 *User:* ${u.username || 'Sem @'}\n` +
-               `🆔 *UID:* \`${id}\`\n` +
-               `📊 *Refs:* ${u.ind}\n\n`;
+        msg += `👤 *Nome:* ${u.nome}\n🆔 *UID:* \`${id}\`\n📊 *Refs:* ${u.ind}\n\n`;
     });
-    if (msg === "👥 *RELATÓRIO DE USUÁRIOS*\n\n") msg = "⚠️ Nenhum usuário registrado.";
-    ctx.reply(msg, { parse_mode: 'Markdown' });
+    safeSend(ctx, msg, { parse_mode: 'Markdown' });
 });
 
 bot.command('enviar', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
     ctx.session = { step: 'WAITING_CONTENT' };
-    ctx.reply("📤 *NOVO MOD*\n\nEnvie o **ARQUIVO** ou o **LINK** agora:", { parse_mode: 'Markdown' });
-});
-
-bot.command('delmod', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    const id = ctx.payload.toUpperCase();
-    const initialLen = mods.length;
-    mods = mods.filter(m => m.id !== id);
-    if (mods.length < initialLen) {
-        saveMods();
-        ctx.reply(`✅ Mod ${id} removido com sucesso.`);
-    } else {
-        ctx.reply("❌ ID não encontrado.");
-    }
+    safeSend(ctx, "📤 *NOVO MOD*\n\nEnvie o **ARQUIVO** ou o **LINK** agora:", { parse_mode: 'Markdown' });
 });
 
 // --- COMANDOS PÚBLICOS ---
@@ -89,15 +75,15 @@ bot.start((ctx) => {
         };
         if (ref && users[ref] && ref != id) {
             users[ref].ind++;
-            bot.telegram.sendMessage(ref, `🎉 Alguém entrou pelo seu link de indicação!`).catch(()=>{});
+            bot.telegram.sendMessage(ref, `🎉 Alguém entrou pelo seu link!`).catch(() => {});
         }
         saveUsers();
     }
-    ctx.reply(`👋 Olá ${ctx.from.first_name}!\n\nBem-vindo ao *VOLX CHEATS* 🚀\n\nUse /mods para ver os cheats disponíveis ou /link para indicar amigos.`);
+    safeSend(ctx, `👋 Olá ${ctx.from.first_name}!\n\nBem-vindo ao *VOLX CHEATS* 🚀\n\nUse /mods para ver os cheats ou /link para indicar.`, { parse_mode: 'Markdown' });
 });
 
 bot.command('link', (ctx) => {
-    ctx.reply(`🔗 *Seu link de indicação:*\n\n\`https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}\`\n\nIndique amigos e suba no /ranking!`, { parse_mode: 'Markdown' });
+    safeSend(ctx, `🔗 *Seu link de indicação:*\n\n\`https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}\``, { parse_mode: 'Markdown' });
 });
 
 bot.command('ranking', (ctx) => {
@@ -107,29 +93,26 @@ bot.command('ranking', (ctx) => {
     
     let msg = "🏆 *TOP 15 INDICADORES*\n\n";
     top.forEach(([id, u], i) => {
-        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '▫️';
-        msg += `${medal} ${i+1}º - ${u.nome} — *${u.ind}* refs\n`;
+        msg += `${i+1}º - ${u.nome} — *${u.ind}* refs\n`;
     });
-    ctx.reply(msg, { parse_mode: 'Markdown' });
+    safeSend(ctx, msg, { parse_mode: 'Markdown' });
 });
 
 bot.command(['mods', 'att'], (ctx) => {
-    if (mods.length === 0) return ctx.reply("📦 Nenhum mod disponível no momento.");
+    if (mods.length === 0) return safeSend(ctx, "📦 Nenhum mod disponível.");
     let msg = "📦 *CATÁLOGO DE MODS*\n\n";
     mods.forEach(m => msg += `🔹 *${m.description}*\nCódigo: \`${m.id}\`\n\n`);
-    msg += "_Digite o código do mod para baixar._";
-    ctx.reply(msg, { parse_mode: 'Markdown' });
+    safeSend(ctx, msg, { parse_mode: 'Markdown' });
 });
 
-// Entrega automática de mods
+// Entrega automática
 bot.hears(/^VOLX-[A-Z0-9]{4}$/i, (ctx) => {
     const mod = mods.find(m => m.id === ctx.message.text.toUpperCase());
     if (!mod) return;
-    ctx.reply(`🚀 Preparando envio de: *${mod.description}*`, { parse_mode: 'Markdown' });
     if (mod.type === 'file') {
-        ctx.replyWithDocument(mod.content, { caption: `✅ Mod: ${mod.description}` });
+        ctx.replyWithDocument(mod.content, { caption: `✅ Mod: ${mod.description}` }).catch(() => {});
     } else {
-        ctx.reply(`🔗 *Link para Download:*\n\n${mod.content}`, { parse_mode: 'Markdown' });
+        safeSend(ctx, `🔗 *Link:*\n\n${mod.content}`, { parse_mode: 'Markdown' });
     }
 });
 
@@ -145,14 +128,14 @@ bot.on(['document', 'video', 'audio', 'text'], async (ctx, next) => {
             type: fileId ? 'file' : 'link' 
         };
         ctx.session.step = 'WAITING_DESC';
-        return ctx.reply("📝 Agora digite a **DESCRIÇÃO** do mod:");
+        return safeSend(ctx, "📝 Agora digite a **DESCRIÇÃO**:");
     }
     
     if (ctx.session.step === 'WAITING_DESC') {
         ctx.session.newMod.description = ctx.message.text;
         mods.push(ctx.session.newMod);
         saveMods();
-        ctx.reply(`✅ *MOD CADASTRADO!*\n\nID: \`${ctx.session.newMod.id}\`\nDescrição: ${ctx.session.newMod.description}`, { parse_mode: 'Markdown' });
+        safeSend(ctx, `✅ *MOD CADASTRADO!*\nID: \`${ctx.session.newMod.id}\``, { parse_mode: 'Markdown' });
         ctx.session = null;
     }
 });
