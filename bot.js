@@ -1,4 +1,4 @@
-aconst { Telegraf, session } = require('telegraf');
+const { Telegraf, session } = require('telegraf');
 const fs = require('fs');
 const http = require('http');
 
