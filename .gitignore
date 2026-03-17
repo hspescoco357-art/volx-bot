@@ -1,1 +1,3 @@
-node_modules
+users_db.json
+mods_db.json
+admins_db.json
