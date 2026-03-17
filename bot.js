@@ -1,4 +1,4 @@
-const { Telegraf, session } = require('telegraf');
+aconst { Telegraf, session } = require('telegraf');
 const fs = require('fs');
 const http = require('http');
 
@@ -17,10 +17,11 @@ const ADMINS_FILE = 'admins_db.json';
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- BANCO DE DADOS ---
-let mods = fs.existsSync(MODS_FILE) ? JSON.parse(fs.readFileSync(MODS_FILE)) : [];
-let users = fs.existsSync(DB_FILE) ? JSON.parse(fs.readFileSync(DB_FILE)) : {};
-let admins = fs.existsSync(ADMINS_FILE) ? JSON.parse(fs.readFileSync(ADMINS_FILE)) : [];
+// --- BANCO DE DADOS (CARREGAMENTO SEGURO) ---
+const loadJSON = (file, def) => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : def;
+let mods = loadJSON(MODS_FILE, []);
+let users = loadJSON(DB_FILE, {});
+let admins = loadJSON(ADMINS_FILE, []);
 
 const save = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
@@ -28,7 +29,7 @@ const save = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2
 bot.use((ctx, next) => {
     const id = ctx.from?.id;
     if (!id) return next();
-    if (users[id]?.banido) return; // Se banido, o bot ignora tudo
+    if (users[id]?.banido) return; 
     if (users[id]?.castigo && users[id].castigo > Date.now()) {
         const resto = Math.round((users[id].castigo - Date.now()) / 60000);
         return ctx.reply(`⏳ Você está de castigo! Faltam ${resto} min.`).catch(() => {});
@@ -37,14 +38,13 @@ bot.use((ctx, next) => {
 });
 
 // --- COMANDOS DE DONO (MODERAÇÃO) ---
-
 bot.command('ban', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
     const target = parseInt(ctx.payload);
     if (!target || !users[target]) return ctx.reply("❌ Use: /ban [ID]");
     users[target].banido = true;
     save(DB_FILE, users);
-    ctx.reply(`🚫 Usuário ${target} foi banido permanentemente.`);
+    ctx.reply(`🚫 Usuário ${target} banido.`);
 });
 
 bot.command('unban', (ctx) => {
@@ -53,82 +53,139 @@ bot.command('unban', (ctx) => {
     if (!target || !users[target]) return ctx.reply("❌ Use: /unban [ID]");
     users[target].banido = false;
     save(DB_FILE, users);
-    ctx.reply(`✅ Usuário ${target} foi desbanido.`);
+    ctx.reply(`✅ Usuário ${target} desbanido.`);
 });
 
 bot.command('castigo', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
-    const [id, min] = ctx.payload.split(' ');
+    const args = ctx.payload.split(' ');
+    const id = args[0];
+    const min = args[1];
     if (!id || !min) return ctx.reply("❌ Use: /castigo [ID] [MINUTOS]");
+    if (!users[id]) users[id] = { nome: "User", ind: 0 };
     users[id].castigo = Date.now() + (parseInt(min) * 60000);
     save(DB_FILE, users);
-    ctx.reply(`🔇 Usuário ${id} em silêncio por ${min} minutos.`);
+    ctx.reply(`🔇 Usuário ${id} em silêncio por ${min} min.`);
 });
 
 bot.command('uncastigo', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
-    const target = parseInt(ctx.payload);
+    const target = ctx.payload;
     if (!target || !users[target]) return ctx.reply("❌ Use: /uncastigo [ID]");
     users[target].castigo = 0;
     save(DB_FILE, users);
-    ctx.reply(`🔊 Castigo removido do usuário ${target}.`);
+    ctx.reply(`🔊 Castigo removido.`);
 });
 
-// --- COMANDOS DE ADMIN (FIX DO DELMOD) ---
-
+// --- COMANDOS DE ADMIN / DONO ---
 bot.command('delmod', (ctx) => {
-    const id = ctx.from.id;
-    if (id !== OWNER_ID && !admins.includes(id)) return;
-    
-    const modId = ctx.payload.toUpperCase();
+    if (ctx.from.id !== OWNER_ID && !admins.includes(ctx.from.id)) return;
+    const modId = ctx.payload.toUpperCase().trim();
     if (!modId) return ctx.reply("❌ Use: /delmod [CÓDIGO]");
-    
     const index = mods.findIndex(m => m.id === modId);
     if (index > -1) {
-        mods.splice(index, 1); // Remove da lista
-        save(MODS_FILE, mods); // Salva a lista limpa
-        ctx.reply(`🗑️ Mod \`${modId}\` removido com sucesso.`);
+        mods.splice(index, 1);
+        save(MODS_FILE, mods);
+        ctx.reply(`🗑️ Mod \`${modId}\` removido.`);
     } else {
-        ctx.reply("❌ Código não encontrado.");
+        ctx.reply("❌ Não encontrado.");
     }
 });
 
-// --- PAINEL ATUALIZADO NO /COMANDS ---
+bot.command('aviso', async (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const msg = ctx.payload;
+    if (!msg) return ctx.reply("❌ Use: /aviso [texto]");
+    const allUsers = Object.keys(users);
+    ctx.reply(`📢 Enviando para ${allUsers.length} pessoas...`);
+    for (const id of allUsers) {
+        bot.telegram.sendMessage(id, `📢 *AVISO VOLX CHEATS*\n\n${msg}`, { parse_mode: 'Markdown' }).catch(() => {});
+    }
+});
+
 bot.command('comands', (ctx) => {
     const id = ctx.from.id;
     if (id !== OWNER_ID && !admins.includes(id)) return;
-    
-    let menu = `👑 *PAINEL ADMINISTRATIVO*\n\n` +
-               `/enviar - Add mod\n` +
-               `/users - Lista de IDs\n` +
-               `/delmod [ID] - Apagar da lista\n`;
-    
+    let menu = `👑 *PAINEL VOLX*\n\n/enviar - Add mod\n/users - Ver IDs\n/delmod [ID] - Deletar\n`;
     if (id === OWNER_ID) {
-        menu += `\n🛡️ *MODERAÇÃO (DONO)*\n` +
-                `/ban /unban [ID]\n` +
-                `/castigo /uncastigo [ID] [min]\n` +
-                `/aviso [texto] - Global\n` +
-                `/admin /unadmin [ID]`;
+        menu += `\n🛡️ *DONO*\n/ban /unban [ID]\n/castigo /uncastigo [ID] [min]\n/aviso [texto]\n/admin /unadmin [ID]`;
     }
     ctx.reply(menu, { parse_mode: 'Markdown' });
 });
 
-// ... (Mantenha o restante das funções de /start, /mods e bot.on igual ao anterior)
+bot.command('admin', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const target = parseInt(ctx.payload);
+    if (!target) return ctx.reply("❌ Use: /admin [ID]");
+    if (!admins.includes(target)) { admins.push(target); save(ADMINS_FILE, admins); ctx.reply(`✅ ${target} agora é ADMIN.`); }
+});
+
+bot.command('unadmin', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const target = parseInt(ctx.payload);
+    admins = admins.filter(id => id !== target);
+    save(ADMINS_FILE, admins);
+    ctx.reply(`❌ ${target} removido.`);
+});
+
+// --- COMANDOS PÚBLICOS ---
 bot.start((ctx) => {
     const id = ctx.from.id;
     if (!users[id]) {
         users[id] = { nome: ctx.from.first_name, ind: 0, banido: false, castigo: 0 };
         save(DB_FILE, users);
     }
-    ctx.reply(`👋 Olá ${ctx.from.first_name}! Bem-vindo ao *VOLX CHEATS*`, { parse_mode: 'Markdown' });
+    ctx.reply(`👋 Olá ${ctx.from.first_name}! Bem-vindo ao *VOLX CHEATS*`, { parse_mode: 'Markdown' }).catch(() => {});
 });
 
 bot.command(['mods', 'att'], (ctx) => {
-    if (mods.length === 0) return ctx.reply("📦 Nenhum mod disponível.");
+    if (mods.length === 0) return ctx.reply("📦 Sem mods.");
     let msg = "📦 *CATÁLOGO DE MODS*\n\n";
     mods.forEach(m => msg += `🔹 *${m.description}*\nID: \`${m.id}\`\n\n`);
-    ctx.reply(msg, { parse_mode: 'Markdown' });
+    ctx.reply(msg, { parse_mode: 'Markdown' }).catch(() => {});
 });
 
-bot.launch().then(() => console.log("🚀 VOLX ATUALIZADO COM MODERAÇÃO!"));
+bot.command('users', (ctx) => {
+    if (ctx.from.id !== OWNER_ID && !admins.includes(ctx.from.id)) return;
+    let msg = "👥 *USUÁRIOS*\n\n";
+    Object.entries(users).forEach(([id, u]) => { msg += `👤 ${u.nome} | ID: \`${id}\` | Refs: ${u.ind}\n`; });
+    ctx.reply(msg, { parse_mode: 'Markdown' }).catch(() => {});
+});
+
+// Entrega automática
+bot.hears(/^VOLX-[A-Z0-9]{4}$/i, (ctx) => {
+    const mod = mods.find(m => m.id === ctx.message.text.toUpperCase());
+    if (!mod) return;
+    if (mod.type === 'file') {
+        ctx.replyWithDocument(mod.content, { caption: `✅ Mod: ${mod.description}` }).catch(() => {});
+    } else {
+        ctx.reply(`🔗 *Link:* ${mod.content}`).catch(() => {});
+    }
+});
+
+// Lógica /enviar
+bot.on(['document', 'video', 'audio', 'text'], async (ctx, next) => {
+    if (!ctx.session || (ctx.from.id !== OWNER_ID && !admins.includes(ctx.from.id)) || ctx.message.text?.startsWith('/')) return next();
+    if (ctx.session.step === 'WAITING_CONTENT') {
+        const fileId = ctx.message.document?.file_id || ctx.message.video?.file_id || ctx.message.audio?.file_id;
+        ctx.session.newMod = { id: 'VOLX-'+Math.random().toString(36).substr(2,4).toUpperCase(), content: fileId || ctx.message.text, type: fileId ? 'file' : 'link' };
+        ctx.session.step = 'WAITING_DESC';
+        return ctx.reply("📝 Digite a **DESCRIÇÃO**:");
+    }
+    if (ctx.session.step === 'WAITING_DESC') {
+        ctx.session.newMod.description = ctx.message.text;
+        mods.push(ctx.session.newMod);
+        save(MODS_FILE, mods);
+        ctx.reply(`✅ MOD CADASTRADO! ID: \`${ctx.session.newMod.id}\``, { parse_mode: 'Markdown' });
+        ctx.session = null;
+    }
+});
+
+bot.command('enviar', (ctx) => {
+    if (ctx.from.id !== OWNER_ID && !admins.includes(ctx.from.id)) return;
+    ctx.session = { step: 'WAITING_CONTENT' };
+    ctx.reply("📤 Envie o **ARQUIVO** ou **LINK**:");
+});
+
+bot.launch().then(() => console.log("🚀 VOLX ONLINE!"));
 
