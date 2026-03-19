@@ -37,9 +37,9 @@ bot.use(async (ctx, next) => {
         if (!groups.includes(ctx.chat.id)) { groups.push(ctx.chat.id); save(); }
     }
     const text = ctx.message?.text || "";
-    const myCmds = ['/start', '/mods', '/ranking', '/link', '/games', '/modsgroup', '/comands', '/aviso', '/admin', '/unadmin', '/users', '/groups'];
+    const myCmds = ['/start', '/mods', '/ranking', '/link', '/games', '/modsgroup', '/comands', '/aviso', '/admin', '/unadmin', '/users', '/groups', '/enviar', '/delmod'];
     const isMyCmd = myCmds.some(c => text.startsWith(c));
-    if (!isMyCmd) return next();
+    if (!isMyCmd && !ctx.session?.step) return next();
 
     const id = ctx.from?.id;
     if (id && !users[id] && !text.startsWith('/start')) {
@@ -55,42 +55,60 @@ const hasPerm = (id, cmd) => (id === OWNER_ID || (admins[id] && admins[id].inclu
 bot.command('comands', (ctx) => {
     const id = ctx.from.id;
     if (id === OWNER_ID) {
-        return ctx.reply("👑 *BEM-VINDO DONO BR7 MODZ*\n\nSeus comandos:\n/admin [ID] [perms]\n/unadmin [ID]\n/aviso [texto]\n/users\n/groups\n/enviar\n/delmod [ID]", { parse_mode: 'Markdown' });
+        return ctx.reply("👑 *BEM-VINDO DONO BR7 MODZ*\n\n/admin [ID] [perms]\n/unadmin [ID]\n/aviso [texto]\n/users\n/groups\n/enviar\n/delmod [ID]", { parse_mode: 'Markdown' });
     } 
     if (admins[id]) {
-        return ctx.reply(`🛡️ *MENU ADMIN*\nPoderes: ${admins[id].join(', ')}`, { parse_mode: 'Markdown' });
+        return ctx.reply(`🛡️ *MENU ADMIN*\n\nPoderes: ${admins[id].join(', ')}`, { parse_mode: 'Markdown' });
     }
 });
 
+// --- SISTEMA DE ENVIAR E DELETAR MODS ---
+
+bot.command('enviar', (ctx) => {
+    if (!hasPerm(ctx.from.id, 'enviar')) return;
+    ctx.session = { step: 'WAIT_MOD' };
+    ctx.reply("📤 *MODO DE ENVIO ATIVO*\n\nEnvie agora o arquivo (APK, ZIP, etc) ou um vídeo/foto com legenda. O que você enviar será o conteúdo do mod.");
+});
+
+bot.on(['document', 'video', 'photo', 'text'], async (ctx, next) => {
+    if (!ctx.session || ctx.session.step !== 'WAIT_MOD') return next();
+    if (ctx.message.text?.startsWith('/')) { ctx.session = null; return next(); }
+
+    const fileId = ctx.message.document?.file_id || ctx.message.video?.file_id || ctx.message.photo?.[0]?.file_id || ctx.message.text;
+    const description = ctx.message.caption || ctx.message.text || "Mod Sem Descrição";
+    const modId = 'VOLX-' + Math.random().toString(36).substr(2, 5).toUpperCase();
+
+    mods.push({ id: modId, file: fileId, desc: description });
+    save();
+
+    ctx.session = null;
+    ctx.reply(`✅ *MOD ADICIONADO COM SUCESSO!*\n\n📝 Descrição: ${description}\n🆔 ID: \`${modId}\``, { parse_mode: 'Markdown' });
+});
+
+bot.command('delmod', (ctx) => {
+    if (!hasPerm(ctx.from.id, 'delmod')) return;
+    const idDel = ctx.payload.trim();
+    if (!idDel) return ctx.reply("❌ Use: /delmod [ID-DO-MOD]");
+
+    const index = mods.findIndex(m => m.id === idDel);
+    if (index === -1) return ctx.reply("❌ Mod não encontrado.");
+
+    mods.splice(index, 1);
+    save();
+    ctx.reply(`🗑️ Mod \`${idDel}\` removido do catálogo.`);
+});
+
+// --- RANKING E OUTROS ---
+
 bot.command('ranking', (ctx) => {
-    // Transforma o objeto em array e ordena pelas indicações (ind)
-    const sorted = Object.entries(users)
-        .sort(([, a], [, b]) => b.ind - a.ind)
-        .slice(0, 10);
-
+    const sorted = Object.entries(users).sort(([, a], [, b]) => b.ind - a.ind).slice(0, 10);
     if (!sorted.length) return ctx.reply("🏆 Ranking vazio.");
-
     let m = "🏆 *TOP 10 INDICADORES VOLX*\n\n";
     sorted.forEach(([id, u], i) => {
-        m += `${i + 1}º - *${u.nome}* — ${u.ind} refs\n`;
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🔹";
+        m += `${medal} *${u.nome}* — ${u.ind} refs\n`;
     });
     ctx.reply(m, { parse_mode: 'Markdown' });
-});
-
-bot.command('groups', (ctx) => {
-    if (!hasPerm(ctx.from.id, 'groups')) return;
-    if (!groups.length) return ctx.reply("Vazio.");
-    let m = "📡 *LISTA DE GRUPOS:* \n\n";
-    groups.forEach(g => m += `🔹 ID: \`${g}\`\n`);
-    ctx.reply(m, { parse_mode: 'Markdown' });
-});
-
-bot.command('admin', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    const args = ctx.payload.split(' ');
-    if (args.length < 2) return ctx.reply("❌ Use: /admin [ID] [perms]");
-    admins[args[0]] = args.slice(1);
-    save(); ctx.reply("✅ Admin adicionado.");
 });
 
 bot.command('aviso', async (ctx) => {
@@ -105,12 +123,25 @@ bot.command('aviso', async (ctx) => {
     ctx.reply("✅ Concluído.");
 });
 
-// --- JOGOS (QUIZ) ---
-const quizData = {
-    facil: { q: "Quanto é 5+5?", a: "10", o: ["8", "10", "12"] },
-    medio: { q: "Linguagem usada no Telegraf?", a: "Node.js", o: ["Python", "Node.js", "PHP"] },
-    dificil: { q: "O que é um Pointer em C++?", a: "Endereço", o: ["Valor", "Endereço", "Função"] }
-};
+bot.command('admin', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    const args = ctx.payload.split(' ');
+    if (args.length < 2) return ctx.reply("❌ Use: /admin [ID] [perms]");
+    admins[args[0]] = args.slice(1);
+    save(); ctx.reply("✅ Admin configurado.");
+});
+
+bot.command('users', (ctx) => {
+    if (!hasPerm(ctx.from.id, 'users')) return;
+    ctx.reply(`👥 Total de usuários: ${Object.keys(users).length}`);
+});
+
+bot.command('groups', (ctx) => {
+    if (!hasPerm(ctx.from.id, 'groups')) return;
+    ctx.reply(`📡 Total de grupos: ${groups.length}\nIDs: \n${groups.join('\n')}`);
+});
+
+// --- JOGOS ---
 
 bot.command('games', (ctx) => {
     ctx.reply("🎮 *ARENA VOLX*", Markup.inlineKeyboard([
@@ -126,9 +157,9 @@ bot.action('set_quiz', ctx => ctx.editMessageText("🎯 *NÍVEL:*", Markup.inlin
 
 bot.action(/^q_(.+)$/, (ctx) => {
     const nivel = ctx.match[1];
-    const data = quizData[nivel];
+    const data = { facil: { q: "5+5?", a: "10", o: ["8","10","12"] }, medio: { q: "JS é?", a: "Linguagem", o: ["Carro","Linguagem","Fruta"] }, dificil: { q: "Pointer em C++?", a: "Endereço", o: ["Valor","Endereço","Loop"] } }[nivel];
     const btn = data.o.map(opt => [Markup.button.callback(opt, opt === data.a ? 'ans_win' : 'ans_loss')]);
-    ctx.editMessageText(`❓ *QUIZ [${nivel.toUpperCase()}]*\n\n${data.q}`, Markup.inlineKeyboard(btn));
+    ctx.editMessageText(`❓ *QUIZ*\n\n${data.q}`, Markup.inlineKeyboard(btn));
 });
 
 bot.action('ans_win', ctx => ctx.editMessageText("🏆 *ACERTOU!*"));
@@ -146,16 +177,14 @@ bot.start((ctx) => {
     ctx.reply("🚀 *VOLX CHEATS REGISTRADO!*");
 });
 
-bot.command('mods', (ctx) => {
+bot.command(['mods', 'modsgroup'], (ctx) => {
+    if (ctx.chat.type !== 'private' && ctx.message.text.startsWith('/modsgroup')) {
+        let m = "📦 *MODS PARA GRUPOS:* \n";
+        mods.forEach(mod => m += `🔹 ${mod.desc}\n`);
+        return ctx.reply(m || "Vazio");
+    }
     let m = "📦 *CATÁLOGO:* \n";
     mods.forEach(mod => m += `🔹 ${mod.desc} | ID: ${mod.id}\n`);
-    ctx.reply(m || "Vazio");
-});
-
-bot.command('modsgroup', (ctx) => {
-    if (ctx.chat.type === 'private') return ctx.reply("❌ Use apenas em GRUPOS.");
-    let m = "📦 *MODS PARA GRUPOS:* \n";
-    mods.forEach(mod => m += `🔹 ${mod.desc}\n`);
     ctx.reply(m || "Vazio");
 });
 
