@@ -2,7 +2,6 @@ const { Telegraf, session, Markup } = require('telegraf');
 const fs = require('fs');
 const http = require('http');
 
-// Servidor para o Cron-job (Saída curta para evitar erro)
 http.createServer((req, res) => { res.writeHead(200); res.end('VOLX_OK'); }).listen(process.env.PORT || 8080);
 
 const BOT_TOKEN = '8656194039:AAHO8K0IvqYND9zh0_rCVWGe1o3U270dSNw';
@@ -39,10 +38,13 @@ bot.use(async (ctx, next) => {
     }
 
     const text = ctx.message?.text || "";
-    const myCmds = ['/start', '/mods', '/ranking', '/link', '/games', '/modsgroup', '/comands', '/aviso', '/admin', '/unadmin', '/users', '/enviar', '/delmod'];
+    const myCmds = ['/start', '/mods', '/ranking', '/link', '/games', '/modsgroup', '/comands', '/aviso', '/admin', '/unadmin', '/users'];
     
+    // Verifica se a mensagem começa com um dos SEUS comandos
     const isMyCmd = myCmds.some(c => text.startsWith(c));
-    if (!isMyCmd) return next(); // Ignora se for comando de outro bot ou mensagem comum
+    
+    // Se não for comando seu, ignora completamente (não responde "Registro Necessário")
+    if (!isMyCmd) return next();
 
     const id = ctx.from?.id;
     if (id && !users[id] && !text.startsWith('/start')) {
@@ -53,56 +55,35 @@ bot.use(async (ctx, next) => {
 
 const hasPerm = (id, cmd) => (id === OWNER_ID || (admins[id] && admins[id].includes(cmd)));
 
-// --- COMANDOS DE DONO E ADMIN ---
-
+// --- COMANDOS DE DONO/ADMIN ---
 bot.command('admin', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
     const args = ctx.payload.split(' ');
-    const targetId = args[0];
-    const perms = args.slice(1);
-    if (!targetId || !perms.length) return ctx.reply("❌ Use: /admin [ID] [permissões]");
-    admins[targetId] = perms;
-    save();
-    ctx.reply(`✅ Admin \`${targetId}\` adicionado!`, { parse_mode: 'Markdown' });
-});
-
-bot.command('unadmin', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    const tid = ctx.payload.trim();
-    if (admins[tid]) { delete admins[tid]; save(); ctx.reply("🗑️ Admin removido."); }
+    if (args.length < 2) return ctx.reply("❌ Use: /admin [ID] [permissões]");
+    admins[args[0]] = args.slice(1);
+    save(); ctx.reply("✅ Admin adicionado.");
 });
 
 bot.command('users', (ctx) => {
     if (!hasPerm(ctx.from.id, 'users')) return;
-    const u = Object.entries(users);
-    let m = `👥 *USUÁRIOS:* ${u.length}\n`;
-    u.slice(0, 20).forEach(([id, val]) => m += `🔹 ${val.nome} (\`${id}\`)\n`);
-    ctx.reply(m, { parse_mode: 'Markdown' });
+    ctx.reply(`👥 Total de usuários: ${Object.keys(users).length}`);
 });
 
 bot.command('aviso', async (ctx) => {
     if (!hasPerm(ctx.from.id, 'aviso')) return;
     const msg = ctx.payload;
-    if (!msg) return ctx.reply("❌ Use: /aviso [texto]");
+    if (!msg) return ctx.reply("❌ Digite a mensagem.");
     const targets = [...Object.keys(users), ...groups];
-    ctx.reply(`📢 Enviando para ${targets.length} destinos...`);
     for (const t of targets) {
         try { await bot.telegram.sendMessage(t, `📢 *AVISO*\n\n${msg}`); await new Promise(r => setTimeout(r, 100)); } catch (e) {}
     }
-    ctx.reply("✅ Concluído!");
+    ctx.reply("✅ Enviado.");
 });
 
-bot.command('comands', (ctx) => {
-    const id = ctx.from.id;
-    if (id === OWNER_ID) return ctx.reply("👑 *DONO:* /admin, /unadmin, /aviso, /users, /enviar, /delmod");
-    if (admins[id]) return ctx.reply(`🛡️ *ADMIN:* ${admins[id].join(', ')}`);
-});
-
-// --- JOGOS (QUIZ FUNCIONAL) ---
-
+// --- SISTEMA DE JOGOS (QUIZ) ---
 const quizData = {
     facil: { q: "Quanto é 5 + 5?", a: "10", o: ["8", "10", "12"] },
-    medio: { q: "Java é uma linguagem de?", a: "Objetos", o: ["Objetos", "Script", "Sinais"] },
+    medio: { q: "Linguagem usada no Android?", a: "Java", o: ["Java", "Swift", "C++"] },
     dificil: { q: "O que é um Pointer em C++?", a: "Endereço", o: ["Valor", "Endereço", "Função"] }
 };
 
@@ -128,8 +109,7 @@ bot.action(/^q_(.+)$/, (ctx) => {
 bot.action('ans_win', ctx => ctx.editMessageText("🏆 *ACERTOU!*"));
 bot.action('ans_loss', ctx => ctx.editMessageText("💀 *ERROU!*"));
 
-// --- PÚBLICO ---
-
+// --- COMANDOS PÚBLICOS ---
 bot.start((ctx) => {
     if (!users[ctx.from.id]) { users[ctx.from.id] = { nome: ctx.from.first_name, ind: 0 }; save(); }
     ctx.reply("🚀 *VOLX CHEATS REGISTRADO!*");
@@ -141,7 +121,7 @@ bot.command(['mods', 'modsgroup'], (ctx) => {
     ctx.reply(m || "Vazio");
 });
 
-bot.command('link', (ctx) => ctx.reply(`🔗 Link: \`https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}\``, { parse_mode: 'Markdown' }));
+bot.command('link', (ctx) => ctx.reply(`🔗 Link: t.me/${ctx.botInfo.username}?start=${ctx.from.id}`));
 
 bot.launch();
 
