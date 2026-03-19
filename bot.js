@@ -33,13 +33,15 @@ const save = () => {
     fs.writeFileSync(GROUPS_FILE, JSON.stringify(groups, null, 2));
 };
 
-// Reset de créditos diário (00:00)
+// Reset de créditos às 00:00
 cron.schedule('0 0 * * *', () => {
     Object.keys(users).forEach(id => { if(users[id]) users[id].credits = 500; });
     save();
 });
 
-// --- MOTOR IA VOLX (HÍBRIDA) ---
+const hasPerm = (id, cmd) => (id === OWNER_ID || (admins[id] && admins[id].includes(cmd)));
+
+// --- MOTOR IA VOLX (HÍBRIDA & DIRETA) ---
 const iaVolxEngine = (text, userId) => {
     const isOwner = userId === OWNER_ID;
     const lowerText = text.toLowerCase();
@@ -47,84 +49,127 @@ const iaVolxEngine = (text, userId) => {
     
     if (!isOwner && (users[userId]?.credits || 0) <= 0) return "⚠️ Créditos insuficientes. Reset às 00:00." + assinatura;
 
-    // Se NÃO for o dono, bloqueia modding
-    const blockModding = ["hack", "mod", "script", "offset", "lib", "cheat", "free fire", "roblox"];
+    // Filtro de Modding
+    const blockModding = ["hack", "mod", "script", "offset", "lib", "cheat", "free fire", "roblox", "aim", "silent"];
     if (!isOwner && blockModding.some(p => lowerText.includes(p))) {
-        return "📚 *AVISO:* Sou uma IA de auxílio escolar e geral. Perguntas sobre Modding são restritas ao meu mestre **br7 modz**." + assinatura;
+        return "📚 *ASSISTENTE:* Assuntos de Modding são restritos ao **br7 modz**. Posso te ajudar com dever de casa ou perguntas gerais." + assinatura;
     }
 
     if (!isOwner) { users[userId].credits -= 10; save(); }
 
-    // Resposta Direta
-    let resposta = "";
-    if (isOwner && (lowerText.includes("script") || lowerText.includes("codigo") || lowerText.includes("mod"))) {
-        resposta = `Entendido, **br7 modz**. Aqui está a lógica de modding solicitada:\n\n\`// Gerando código de elite...\``;
-    } else {
-        resposta = `Análise concluída: Sobre sua pergunta "${text}", informo que os dados apontam para a seguinte solução acadêmica/geral... [Resposta Direta]`;
+    if (isOwner && (lowerText.includes("crie") || lowerText.includes("codigo") || lowerText.includes("mod"))) {
+        return `✅ **Com certeza, br7 modz.** Aqui está a lógica solicitada:\n\n\`\`\`cpp\n// Gerado para o Proprietário\nvoid main() { /* Seu código aqui */ }\n\`\`\`` + assinatura;
     }
 
-    return resposta + (isOwner ? "" : `\n\n💰 *Créditos:* ${users[userId].credits}`) + assinatura;
+    return `Prezado, sobre "${text}": Aqui está a resposta direta solicitada para seu auxílio.` + (isOwner ? "" : `\n\n💰 *Créditos:* ${users[userId].credits}`) + assinatura;
 };
 
-// --- OUVINTES ---
+// --- OUVINTE DE MENSAGENS E GRUPOS ---
 bot.on('text', async (ctx, next) => {
     const text = ctx.message.text;
-    const textUP = text.toUpperCase();
-    
+    const userId = ctx.from.id;
+
     if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) {
         groups.push(ctx.chat.id); save();
     }
 
-    if (textUP.startsWith('VOLX-')) {
-        const mod = mods.find(m => m.id === textUP);
+    if (text.toUpperCase().startsWith('VOLX-')) {
+        const mod = mods.find(m => m.id === text.toUpperCase());
         if (mod) return mod.cont.includes('http') ? ctx.reply(`📦 *MOD:* ${mod.desc}\n🔗 ${mod.cont}`) : ctx.replyWithDocument(mod.cont, { caption: `📦 *MOD:* ${mod.desc}` });
     }
 
     if (ctx.message?.reply_to_message?.from?.id === ctx.botInfo.id) {
-        return ctx.reply(iaVolxEngine(text, ctx.from.id), { parse_mode: 'Markdown' });
+        return ctx.reply(iaVolxEngine(text, userId), { parse_mode: 'Markdown' });
     }
     return next();
 });
 
-// --- COMANDOS ---
-bot.command('ia', (ctx) => ctx.reply(iaVolxEngine(ctx.payload || "Olá", ctx.from.id), { parse_mode: 'Markdown' }));
-
+// --- COMANDOS DE ADMINISTRAÇÃO ---
 bot.command('comands', (ctx) => {
-    if (ctx.from.id === OWNER_ID) return ctx.reply("👑 *MENU DONO*\n\n/admin /unadmin /aviso /avisogroups /users /groups /enviar /delmod /ia /credits /ranking /games", { parse_mode: 'Markdown' });
+    if (ctx.from.id === OWNER_ID) return ctx.reply("👑 *MENU DONO*\n\n/admin /unadmin /aviso /avisogroups /users /groups /enviar /delmod /ia /credits /ranking /games /link", { parse_mode: 'Markdown' });
 });
 
 bot.command('avisogroups', async (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
     const msg = ctx.payload;
-    if (!msg) return ctx.reply("❌ Digite o aviso.");
-    for (const gId of groups) {
-        try { await bot.telegram.sendMessage(gId, `📢 *AVISO:* ${msg}`); } catch (e) {}
-    }
+    if (!msg) return ctx.reply("❌ Digite a mensagem.");
+    for (const gId of groups) { try { await bot.telegram.sendMessage(gId, `📢 *AVISO:* ${msg}`); } catch (e) {} }
     ctx.reply("✅ Enviado aos grupos.");
 });
 
-bot.command('credits', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    const [tid, val] = ctx.payload.split(' ');
-    if (users[tid]) { users[tid].credits = parseInt(val); save(); ctx.reply("💰 Créditos atualizados."); }
+bot.command('aviso', async (ctx) => {
+    if (!hasPerm(ctx.from.id, 'aviso')) return;
+    const userIds = Object.keys(users);
+    for (const uId of userIds) { try { await bot.telegram.sendMessage(uId, `📢 *AVISO:* ${ctx.payload}`); } catch (e) {} }
+    ctx.reply("✅ Enviado aos usuários.");
 });
 
-bot.command('link', (ctx) => ctx.reply(`🔗 *LINK:* https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`));
+// --- SISTEMA DE JOGOS (FIX QUIZ) ---
+bot.command('games', (ctx) => {
+    ctx.reply("🎮 *ARENA VOLX*", Markup.inlineKeyboard([
+        [Markup.button.callback('❓ Quiz', 'menu_quiz')],
+        [Markup.button.callback('❌ Jogo da Velha (PvP)', 'velha_init')]
+    ]));
+});
+
+bot.action('menu_quiz', ctx => {
+    ctx.editMessageText("🎯 *DIFICULDADE:*", Markup.inlineKeyboard([
+        [Markup.button.callback('🟢 Fácil', 'qz_facil'), Markup.button.callback('🟡 Médio', 'qz_medio')],
+        [Markup.button.callback('🔴 Difícil', 'qz_dificil')]
+    ]));
+});
+
+bot.action(/qz_(.+)/, ctx => {
+    const nivel = ctx.match[1].toUpperCase();
+    ctx.answerCbQuery();
+    ctx.reply(`🎯 Quiz [${nivel}] iniciado! Pergunta 1: ...`);
+});
+
+bot.action('velha_init', ctx => {
+    const gId = ctx.from.id;
+    games_state[gId] = { p1: gId, p1_n: ctx.from.first_name };
+    ctx.editMessageText(`🕹 *JOGO DA VELHA*\nEsperando oponente...`, 
+    Markup.inlineKeyboard([[Markup.button.callback(`🤝 Aceitar de ${ctx.from.first_name}`, `vj_${gId}`)]]));
+});
+
+bot.action(/vj_(.+)/, ctx => {
+    const gId = ctx.match[1];
+    if (ctx.from.id == gId) return ctx.answerCbQuery("Não pode contra si mesmo!");
+    ctx.editMessageText(`⚔️ Jogo Iniciado: ${games_state[gId].p1_n} VS ${ctx.from.first_name}`);
+});
+
+// --- GERAL ---
+bot.command('ia', (ctx) => ctx.reply(iaVolxEngine(ctx.payload || "Olá", ctx.from.id), { parse_mode: 'Markdown' }));
+
+bot.command('link', (ctx) => ctx.reply(`🔗 *SEU LINK:* https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`));
 
 bot.command('mods', (ctx) => {
-    if (ctx.chat.type !== 'private') return ctx.reply("No PV!");
-    let m = "📦 *CATÁLOGO:* \n";
+    if (ctx.chat.type !== 'private') return ctx.reply("Apenas no PV!");
+    let m = "📦 *CATÁLOGO:* \n\n";
     mods.forEach(mod => m += `🔹 ${mod.desc} | ID: \`${mod.id}\`\n`);
     ctx.reply(m || "Vazio");
 });
 
-bot.command('games', (ctx) => {
-    ctx.reply("🎮 *ARENA*", Markup.inlineKeyboard([[Markup.button.callback('❓ Quiz', 'menu_quiz')], [Markup.button.callback('❌ Velha', 'velha_init')]]));
+bot.command('modsgroup', (ctx) => {
+    if (ctx.chat.type === 'private') return ctx.reply("Comando para grupos.");
+    ctx.reply("📂 Verifique o catálogo no meu privado!");
+});
+
+bot.command('ranking', (ctx) => {
+    const sorted = Object.entries(users).sort(([,a],[,b]) => b.ind - a.ind).slice(0, 10);
+    let m = "🏆 *RANKING INDICADORES*\n\n";
+    sorted.forEach(([id, u], i) => m += `${i==0?"🥇":"🔹"} *${u.nome}* — ${u.ind} refs\n`);
+    ctx.reply(m, { parse_mode: 'Markdown' });
 });
 
 bot.start((ctx) => {
-    if (!users[ctx.from.id]) { users[ctx.from.id] = { nome: ctx.from.first_name, ind: 0, credits: 500 }; save(); }
-    ctx.reply("🚀 Sistema VOLX Ativo! Use /ia para dúvidas.");
+    const id = ctx.from.id, ref = ctx.payload;
+    if (!users[id]) {
+        users[id] = { nome: ctx.from.first_name, ind: 0, credits: 500 };
+        if (ref && users[ref] && ref != id) users[ref].ind++;
+        save();
+    }
+    ctx.reply("🚀 *VOLX CHEATS ATIVO!*");
 });
 
 bot.launch();
