@@ -23,7 +23,7 @@ let users = loadJSON(DB_FILE, {});
 let mods = loadJSON(MODS_FILE, []);
 let admins = loadJSON(ADMINS_FILE, {});
 let groups = loadJSON(GROUPS_FILE, []);
-let games_state = {}; 
+let games_state = {};
 
 const save = () => {
     fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
@@ -34,79 +34,82 @@ const save = () => {
 
 const hasPerm = (id, cmd) => (id === OWNER_ID || (admins[id] && admins[id].includes(cmd)));
 
-// --- TABULEIRO JOGO DA VELHA ---
+// --- LÓGICA DE VITÓRIA VELHA ---
+const checkWinner = (board) => {
+    const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    for (let l of lines) {
+        if (board[l[0]] && board[l[0]] === board[l[1]] && board[l[0]] === board[l[2]]) return board[l[0]];
+    }
+    return board.includes(null) ? null : 'Empate';
+};
+
 const renderBoard = (gId) => {
-    const game = games_state[gId];
-    const b = game.board;
+    const g = games_state[gId];
     const buttons = [];
     for (let i = 0; i < 9; i += 3) {
         buttons.push([
-            Markup.button.callback(b[i] || '⬜', `vhit_${gId}_${i}`),
-            Markup.button.callback(b[i+1] || '⬜', `vhit_${gId}_${i+1}`),
-            Markup.button.callback(b[i+2] || '⬜', `vhit_${gId}_${i+2}`)
+            Markup.button.callback(g.board[i] || '⬜', `vhit_${gId}_${i}`),
+            Markup.button.callback(g.board[i+1] || '⬜', `vhit_${gId}_${i+1}`),
+            Markup.button.callback(g.board[i+2] || '⬜', `vhit_${gId}_${i+2}`)
         ]);
     }
     return Markup.inlineKeyboard(buttons);
 };
 
-// --- OUVINTE DE MENSAGENS ---
-bot.on('text', async (ctx, next) => {
-    const text = ctx.message.text.toUpperCase();
-    if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) {
-        groups.push(ctx.chat.id); save();
-    }
+// --- OUVINTE DE MENSAGENS (AUTO-REGISTRO E MODS) ---
+bot.on('message', async (ctx, next) => {
+    if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) { groups.push(ctx.chat.id); save(); }
+    if (ctx.from && !users[ctx.from.id]) { users[ctx.from.id] = { nome: ctx.from.first_name, ind: 0 }; save(); }
+    
+    const text = ctx.message.text?.toUpperCase() || "";
     if (text.startsWith('VOLX-')) {
         const mod = mods.find(m => m.id === text);
-        if (mod) return mod.cont.includes('http') ? ctx.reply(`📦 *MOD:* ${mod.desc}\n🔗 ${mod.cont}`) : ctx.replyWithDocument(mod.cont, { caption: `📦 *MOD:* ${mod.desc}` });
+        if (mod) return ctx.reply(`📦 *MOD:* ${mod.desc}\n🔗 ${mod.cont}`);
     }
     return next();
 });
 
-// --- COMANDOS DE ADMINISTRAÇÃO (TODOS RECUPERADOS) ---
+// --- COMANDOS ADMINISTRATIVOS ---
 bot.command('comands', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
-    ctx.reply("👑 *MENU COMPLETO DONO br7 modz*\n\n/admin /unadmin /aviso /avisogroups /users /groups /enviar /delmod /hist /ranking /games /link", { parse_mode: 'Markdown' });
-});
-
-bot.command('admin', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    const [tid, ...cmds] = ctx.payload.split(' ');
-    admins[tid] = cmds.length ? cmds : ['aviso', 'users', 'enviar'];
-    save(); ctx.reply(`🛡️ Admin ${tid} adicionado!`);
-});
-
-bot.command('unadmin', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    delete admins[ctx.payload]; save(); ctx.reply("❌ Admin removido.");
+    ctx.reply("👑 *MENU VOLX CHEATS*\n\n/admin /unadmin /aviso /avisogroups /users /enviar /delmod /ranking /games /link /id", { parse_mode: 'Markdown' });
 });
 
 bot.command('avisogroups', async (ctx) => {
-    if (!hasPerm(ctx.from.id, 'aviso')) return;
+    if (ctx.from.id !== OWNER_ID) return;
     const msg = ctx.payload;
+    if (!msg) return ctx.reply("❌ Digite a mensagem.");
     for (const gId of groups) { try { await bot.telegram.sendMessage(gId, `📢 *AVISO:* ${msg}`); } catch(e){} }
     ctx.reply("✅ Enviado aos grupos.");
 });
 
+bot.command('aviso', async (ctx) => {
+    if (!hasPerm(ctx.from.id, 'aviso')) return;
+    for (const uId of Object.keys(users)) { try { await bot.telegram.sendMessage(uId, `📩 *MENSAGEM:* ${ctx.payload}`); } catch(e){} }
+    ctx.reply("✅ Enviado aos usuários.");
+});
+
+bot.command('admin', (ctx) => { 
+    if (ctx.from.id === OWNER_ID) { admins[ctx.payload] = ['aviso','enviar']; save(); ctx.reply("🛡️ Admin Adicionado."); } 
+});
+
+bot.command('enviar', (ctx) => { 
+    if (hasPerm(ctx.from.id, 'enviar')) ctx.reply("📤 Mande o link ou arquivo do MOD para registrar."); 
+});
+
+bot.command('id', (ctx) => ctx.reply(`Seu Chat ID: \`${ctx.chat.id}\``));
+
 bot.command('users', (ctx) => {
-    if (!hasPerm(ctx.from.id, 'users')) return;
-    ctx.reply(`👥 Usuários: ${Object.keys(users).length}\n🏘 Grupos: ${groups.length}`);
+    if (ctx.from.id === OWNER_ID) ctx.reply(`📊 Usuários: ${Object.keys(users).length}\n🏘 Grupos: ${groups.length}`);
 });
 
-bot.command('enviar', (ctx) => {
-    if (!hasPerm(ctx.from.id, 'enviar')) return;
-    ctx.reply("📤 Envie o link ou arquivo para registrar um novo MOD.");
-});
-
-// --- JOGOS (QUIZ E VELHA FIX) ---
+// --- GAMES (QUIZ MAT/MOD + VELHA WIN FIX) ---
 bot.command('games', (ctx) => {
-    ctx.reply("🎮 *ARENA VOLX*", Markup.inlineKeyboard([
-        [Markup.button.callback('❓ Quiz', 'menu_quiz')],
-        [Markup.button.callback('❌ Jogo da Velha (PvP)', 'velha_init')]
-    ]));
+    ctx.reply("🎮 *ARENA VOLX*", Markup.inlineKeyboard([[Markup.button.callback('❓ Quiz', 'menu_quiz')], [Markup.button.callback('❌ Jogo da Velha (PvP)', 'velha_init')]]));
 });
 
 bot.action('menu_quiz', ctx => {
-    ctx.editMessageText("🎯 *NÍVEL DO QUIZ:*", Markup.inlineKeyboard([
+    ctx.editMessageText("🎯 *ESCOLHA O NÍVEL:*", Markup.inlineKeyboard([
         [Markup.button.callback('🟢 Fácil', 'qz_F'), Markup.button.callback('🟡 Médio', 'qz_M')],
         [Markup.button.callback('🔴 Difícil', 'qz_D')]
     ]));
@@ -114,9 +117,15 @@ bot.action('menu_quiz', ctx => {
 
 bot.action(/qz_(.+)/, ctx => {
     const n = ctx.match[1];
-    const q = n === 'F' ? "Dono da Volx?" : "Linguagem da Lib?";
-    const opts = n === 'F' ? ["br7 modz", "Outro"] : ["C++", "Java"];
-    ctx.editMessageText(`🎯 [${n}] ${q}`, Markup.inlineKeyboard(opts.map(o => [Markup.button.callback(o, (o=="br7 modz"||o=="C++")?'win':'loss')])));
+    const data = { 
+        'F': {q: "Quem é o dono da Volx?", a: "br7 modz"}, 
+        'M': {q: "Resolva: 2x + 10 = 20. Qual o valor de X?", a: "5"}, 
+        'D': {q: "O que é um 'Offset' no modding de Libs?", a: "Endereço na Lib"} 
+    };
+    ctx.editMessageText(`🎯 [NÍVEL ${n}]\n\n${data[n].q}`, Markup.inlineKeyboard([
+        [Markup.button.callback(data[n].a, 'win')],
+        [Markup.button.callback('Resposta Incorreta', 'loss')]
+    ]));
 });
 
 bot.action('win', ctx => ctx.answerCbQuery("✅ ACERTOU!"));
@@ -124,38 +133,54 @@ bot.action('loss', ctx => ctx.answerCbQuery("❌ ERROU!"));
 
 bot.action('velha_init', ctx => {
     const gId = ctx.from.id;
-    games_state[gId] = { p1: gId, p1_n: ctx.from.first_name, board: Array(9).fill(null), turn: gId };
-    ctx.editMessageText(`🕹 *VELHA*\nAguardando oponente...`, Markup.inlineKeyboard([[Markup.button.callback(`🤝 Aceitar de ${ctx.from.first_name}`, `vjoin_${gId}`)]]));
+    games_state[gId] = { p1: gId, p1_n: ctx.from.first_name, board: Array(9).fill(null), turn: gId, active: true };
+    ctx.editMessageText(`🕹 *JOGO DA VELHA*\n\nEsperando oponente aceitar...`, Markup.inlineKeyboard([[Markup.button.callback(`🤝 Aceitar Desafio`, `vjoin_${gId}`)]]));
 });
 
 bot.action(/vjoin_(.+)/, ctx => {
     const gId = ctx.match[1];
-    if (ctx.from.id == gId) return ctx.answerCbQuery("Não pode jogar contra si!");
+    if (ctx.from.id == gId) return ctx.answerCbQuery("Não pode jogar contra si mesmo!");
     games_state[gId].p2 = ctx.from.id;
-    ctx.editMessageText(`⚔️ Jogo Iniciado!`, renderBoard(gId));
+    games_state[gId].p2_n = ctx.from.first_name;
+    ctx.editMessageText(`⚔️ ${games_state[gId].p1_n} (❌) VS ${ctx.from.first_name} (⭕)`, renderBoard(gId));
 });
 
 bot.action(/vhit_(.+)_(.+)/, ctx => {
     const [gId, pos] = [ctx.match[1], parseInt(ctx.match[2])];
     const g = games_state[gId];
-    if (!g || ctx.from.id !== g.turn || g.board[pos]) return;
+    if (!g || !g.active || ctx.from.id !== g.turn || g.board[pos]) return ctx.answerCbQuery("Aguarde sua vez!");
+
     g.board[pos] = ctx.from.id === g.p1 ? '❌' : '⭕';
+    const win = checkWinner(g.board);
+    
+    if (win) {
+        g.active = false;
+        const result = win === 'Empate' ? "🤝 EMPATOU!" : `🏆 VENCEU: ${win === '❌' ? g.p1_n : g.p2_n}`;
+        return ctx.editMessageText(result, renderBoard(gId));
+    }
+    
     g.turn = ctx.from.id === g.p1 ? g.p2 : g.p1;
     ctx.editMessageReplyMarkup(renderBoard(gId).reply_markup);
 });
 
-// --- GERAL ---
-bot.command('link', (ctx) => ctx.reply(`🔗 *LINK:* https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`));
+// --- RANKING E LINK ---
 bot.command('ranking', (ctx) => {
     const s = Object.entries(users).sort(([,a],[,b]) => b.ind - a.ind).slice(0, 10);
-    let m = "🏆 *RANKING*\n\n";
+    let m = "🏆 *RANKING DE INDICAÇÕES*\n\n";
     s.forEach(([id, u], i) => m += `${i==0?"🥇":"🔹"} *${u.nome}* — ${u.ind}\n`);
     ctx.reply(m, { parse_mode: 'Markdown' });
 });
 
+bot.command('link', (ctx) => ctx.reply(`🔗 *SEU LINK DE CONVITE:*\nhttps://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`));
+
 bot.start((ctx) => {
-    if (!users[ctx.from.id]) { users[ctx.from.id] = { nome: ctx.from.first_name, ind: 0 }; save(); }
-    ctx.reply("🚀 *VOLX CHEATS:* Online!");
+    const id = ctx.from.id, ref = ctx.payload;
+    if (!users[id]) {
+        users[id] = { nome: ctx.from.first_name, ind: 0 };
+        if (ref && users[ref] && ref != id) users[ref].ind++;
+        save();
+    }
+    ctx.reply("🚀 *VOLX CHEATS ONLINE!* Use /comands para ver as funções.");
 });
 
 bot.launch();
