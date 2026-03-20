@@ -2,7 +2,6 @@ const { Telegraf, session, Markup } = require('telegraf');
 const fs = require('fs');
 const http = require('http');
 
-// Servidor para o Render
 http.createServer((req, res) => { res.writeHead(200); res.end('VOLX_OK'); }).listen(process.env.PORT || 8080);
 
 const BOT_TOKEN = '8656194039:AAHO8K0IvqYND9zh0_rCVWGe1o3U270dSNw';
@@ -24,7 +23,6 @@ let users = loadJSON(DB_FILE, {});
 let mods = loadJSON(MODS_FILE, []);
 let admins = loadJSON(ADMINS_FILE, {});
 let groups = loadJSON(GROUPS_FILE, []);
-let games_state = {};
 
 const save = () => {
     fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
@@ -38,9 +36,8 @@ const hasPerm = (id) => (id === OWNER_ID || admins[id]);
 // --- TRAVA DE REGISTRO ---
 bot.use((ctx, next) => {
     const id = ctx.from?.id;
-    const text = ctx.message?.text || "";
-    if (id && !users[id] && text.startsWith('/') && !text.startsWith('/start')) {
-        return ctx.reply("⚠️ *ACESSO NEGADO!*\nRegistre-se com /start no meu privado primeiro.", { parse_mode: 'Markdown' });
+    if (id && !users[id] && ctx.message?.text && !ctx.message.text.startsWith('/start')) {
+        return ctx.reply("⚠️ *ACESSO NEGADO!*\nRegistre-se com /start no meu privado primeiro.");
     }
     return next();
 });
@@ -48,46 +45,45 @@ bot.use((ctx, next) => {
 // --- COMANDOS DONO ---
 bot.command('comands', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
-    ctx.reply("👑 *MENU DONO VOLX*\n\n/admin /unadmin /aviso /avisogroups /users /groups /enviar /delmod /ranking /games /addgroup /id", { parse_mode: 'Markdown' });
+    ctx.reply("👑 *MENU DONO VOLX*\n\n/admin /unadmin /aviso /users /groups /enviar /delmod /ranking /games /addgroup", { parse_mode: 'Markdown' });
+});
+
+// Novo comando /aviso Unificado (PV + Grupos)
+bot.command('aviso', async (ctx) => {
+    if (!hasPerm(ctx.from.id)) return;
+    const msg = ctx.payload;
+    if (!msg) return ctx.reply("❌ Digite a mensagem após o comando. Ex: /aviso Ola a todos");
+
+    let countU = 0, countG = 0;
+
+    // Enviar para Usuários (PV)
+    for (const uId in users) {
+        try { await bot.telegram.sendMessage(uId, `📢 *AVISO VOLX:*\n\n${msg}`, { parse_mode: 'Markdown' }); countU++; } catch (e) {}
+    }
+
+    // Enviar para Grupos
+    for (const gId of groups) {
+        try { await bot.telegram.sendMessage(gId, `📢 *AVISO GLOBAL:*\n\n${msg}`, { parse_mode: 'Markdown' }); countG++; } catch (e) {}
+    }
+
+    ctx.reply(`✅ *Aviso enviado!*\n👥 Privado: ${countU}\n🏘️ Grupos: ${countG}`, { parse_mode: 'Markdown' });
+});
+
+bot.command('users', (ctx) => {
+    if (!hasPerm(ctx.from.id)) return;
+    const total = Object.keys(users).length;
+    ctx.reply(`📊 *Estatísticas:* ${total} usuários registrados.`, { parse_mode: 'Markdown' });
 });
 
 bot.command('admin', (ctx) => { if (ctx.from.id === OWNER_ID) { admins[ctx.payload] = true; save(); ctx.reply("🛡️ Admin ADD."); } });
 bot.command('unadmin', (ctx) => { if (ctx.from.id === OWNER_ID) { delete admins[ctx.payload]; save(); ctx.reply("🛡️ Admin REMOVIDO."); } });
 
-bot.command('delmod', (ctx) => {
-    if (!hasPerm(ctx.from.id)) return;
-    const idMod = ctx.payload.toUpperCase();
-    mods = mods.filter(m => m.id !== idMod);
-    save(); ctx.reply(`🗑️ Mod ${idMod} deletado.`);
-});
-
 bot.command('addgroup', (ctx) => {
     if (ctx.from.id !== OWNER_ID) return;
-    ctx.reply("👑 Me adicione a um grupo:", Markup.inlineKeyboard([[Markup.button.url("➕ Adicionar", `https://t.me/${ctx.botInfo.username}?startgroup=true`)]]));
+    ctx.reply("👑 Clique abaixo para me adicionar:", Markup.inlineKeyboard([[Markup.button.url("➕ Adicionar", `https://t.me/${ctx.botInfo.username}?startgroup=true`)]]));
 });
 
-// --- GAMES (QUIZ PÚBLICO E VELHA) ---
-bot.command('games', (ctx) => ctx.reply("🎮 *ARENA VOLX*", Markup.inlineKeyboard([[Markup.button.callback('❓ Quiz', 'menu_quiz')], [Markup.button.callback('❌ Jogo da Velha', 'velha_init')]])));
-
-bot.action('menu_quiz', ctx => ctx.editMessageText("🎯 *NÍVEL DO QUIZ:*", Markup.inlineKeyboard([[Markup.button.callback('🟢 Fácil', 'qz_F'), Markup.button.callback('🟡 Médio', 'qz_M')], [Markup.button.callback('🔴 Difícil', 'qz_D')]])));
-
-bot.action(/qz_(.+)/, ctx => {
-    const n = ctx.match[1];
-    const data = { 
-        'F': ["Dono da Volx?", "br7 modz"], 
-        'M': ["Equação: 2x+10=20. X?", "5"], 
-        'D': ["O que é Offset em Modding?", "Endereço na Lib"] 
-    };
-    ctx.editMessageText(`🎯 [NÍVEL ${n}]\n${data[n][0]}\n\n(Apenas 1 tentativa!)`, Markup.inlineKeyboard([
-        [Markup.button.callback(data[n][1], `qw_${ctx.from.first_name}`)],
-        [Markup.button.callback('Opção Incorreta', `ql_${ctx.from.first_name}`)]
-    ]));
-});
-
-bot.action(/qw_(.+)/, ctx => ctx.editMessageText(`✅ *${ctx.match[1]} ACERTOU!*`, { parse_mode: 'Markdown' }));
-bot.action(/ql_(.+)/, ctx => ctx.editMessageText(`❌ *${ctx.match[1]} ERROU!*`, { parse_mode: 'Markdown' }));
-
-// --- COMANDOS GERAIS ---
+// --- COMANDOS GERAIS (ANTERIORES) ---
 bot.start((ctx) => {
     const id = ctx.from.id, ref = ctx.payload;
     if (!users[id]) {
@@ -104,29 +100,9 @@ bot.command('ranking', (ctx) => {
     ctx.reply(m, { parse_mode: 'Markdown' });
 });
 
-bot.command('link', (ctx) => {
-    if (ctx.chat.type !== 'private') return ctx.reply("❌ Peça no PV.");
-    ctx.reply(`🔗 *LINK:* https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`);
-});
-
-bot.command('mods', (ctx) => {
-    if (ctx.chat.type !== 'private') return ctx.reply("❌ No privado apenas.");
-    let m = "📂 *MODS:* \n";
-    mods.forEach(x => m += `🔹 ${x.desc} [${x.id}]\n`);
-    ctx.reply(mods.length ? m : "Sem mods cadastrados.");
-});
-
-bot.command('modsgroup', (ctx) => ctx.reply("📂 O catálogo está no meu privado!"));
-
-// --- OUVINTE PARA SILÊNCIO E CÓDIGOS ---
-bot.on('message', (ctx) => {
+bot.on('message', (ctx, next) => {
     if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) { groups.push(ctx.chat.id); save(); }
-    
-    const text = ctx.message.text?.toUpperCase() || "";
-    if (text.startsWith('VOLX-')) {
-        const mod = mods.find(m => m.id === text);
-        if (mod) return ctx.reply(`📦 *MOD:* ${mod.desc}\n🔗 ${mod.cont}`);
-    }
+    return next();
 });
 
 bot.launch();
