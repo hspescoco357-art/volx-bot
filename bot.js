@@ -1,109 +1,90 @@
-const { Telegraf, session, Markup } = require('telegraf');
-const fs = require('fs');
-const http = require('http');
+import telebot
+from tinydb import TinyDB, Query
+import random
 
-http.createServer((req, res) => { res.writeHead(200); res.end('VOLX_OK'); }).listen(process.env.PORT || 8080);
+# --- CONFIGURAÇÕES ---
+TOKEN = '7629557685:AAF8M1A5-uU-yX6_F6W6Y5M8Z7X9Y4M3X1'
+OWNER_ID = 6365451230 # Seu UID
 
-const BOT_TOKEN = '8656194039:AAHO8K0IvqYND9zh0_rCVWGe1o3U270dSNw';
-const OWNER_ID = 7823943091;
-const DB_FILE = 'users_db.json';
-const MODS_FILE = 'mods_db.json';
-const ADMINS_FILE = 'admins_db.json';
-const GROUPS_FILE = 'groups_db.json';
+db = TinyDB('usuarios.json')
+User = Query()
+bot = telebot.TeleBot(TOKEN)
 
-const bot = new Telegraf(BOT_TOKEN);
-bot.use(session());
+# Função para checar acesso
+def tem_acesso(user_id):
+    if user_id == OWNER_ID: return True
+    return db.search(User.id == user_id)
 
-const loadJSON = (file, def) => {
-    try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : def; }
-    catch (e) { return def; }
-};
+# --- COMANDOS DE INÍCIO E ACESSO ---
+@bot.message_handler(commands=['start'])
+def start(message):
+    uid = message.from_user.id
+    if tem_acesso(uid):
+        bot.reply_to(message, "✅ **Bot Volx Online!**\n\nUse /menu para ver os comandos.")
+    else:
+        bot.send_message(message.chat.id, "❌ **ACESSO NEGADO.**\nFale com @Volxcheatsofc")
 
-let users = loadJSON(DB_FILE, {});
-let mods = loadJSON(MODS_FILE, []);
-let admins = loadJSON(ADMINS_FILE, {});
-let groups = loadJSON(GROUPS_FILE, []);
+@bot.message_handler(commands=['add'])
+def add(message):
+    if message.from_user.id != OWNER_ID: return
+    try:
+        new_id = int(message.text.split()[1])
+        if not db.search(User.id == new_id):
+            db.insert({'id': new_id, 'credits': 0, 'wins': 0})
+            bot.reply_to(message, f"✅ Usuário {new_id} registrado!")
+        else:
+            bot.reply_to(message, "⚠️ Já registrado.")
+    except:
+        bot.reply_to(message, "Use: /add ID")
 
-const save = () => {
-    fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
-    fs.writeFileSync(MODS_FILE, JSON.stringify(mods, null, 2));
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2));
-    fs.writeFileSync(GROUPS_FILE, JSON.stringify(groups, null, 2));
-};
+# --- COMANDOS DE UTILIDADE & MODS ---
+@bot.message_handler(commands=['id'])
+def get_id(message):
+    if not tem_acesso(message.from_user.id): return
+    bot.reply_to(message, f"🆔 Seu ID: `{message.from_user.id}`", parse_mode="Markdown")
 
-const hasPerm = (id) => (id === OWNER_ID || admins[id]);
+@bot.message_handler(commands=['mods'])
+def mods(message):
+    if not tem_acesso(message.from_user.id): return
+    menu_text = (
+        "🛠️ **MENU MODS VOLX** 🛠️\n\n"
+        "1. Regedit Mobile\n"
+        "2. Aimlock Script\n"
+        "3. No Recoil Config\n\n"
+        "Solicite o arquivo com o dono!"
+    )
+    bot.reply_to(message, menu_text, parse_mode="Markdown")
 
-// --- TRAVA DE REGISTRO ---
-bot.use((ctx, next) => {
-    const id = ctx.from?.id;
-    if (id && !users[id] && ctx.message?.text && !ctx.message.text.startsWith('/start')) {
-        return ctx.reply("⚠️ *ACESSO NEGADO!*\nRegistre-se com /start no meu privado primeiro.");
-    }
-    return next();
-});
+# --- SISTEMA DE GAMES & RANKING ---
+@bot.message_handler(commands=['games'])
+def games(message):
+    if not tem_acesso(message.from_user.id): return
+    bot.reply_to(message, "🎮 **GAMES DISPONÍVEIS:**\n\n/quiz - Teste seus conhecimentos\n/velha - Tic-Tac-Toe")
 
-// --- COMANDOS DONO ---
-bot.command('comands', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    ctx.reply("👑 *MENU DONO VOLX*\n\n/admin /unadmin /aviso /users /groups /enviar /delmod /ranking /games /addgroup", { parse_mode: 'Markdown' });
-});
+@bot.message_handler(commands=['ranking'])
+def ranking(message):
+    if not tem_acesso(message.from_user.id): return
+    all_users = db.all()
+    # Ordena por vitórias (se existir no seu DB)
+    ranking_list = sorted(all_users, key=lambda x: x.get('wins', 0), reverse=True)[:5]
+    
+    txt = "🏆 **TOP 5 RANKING VOLX** 🏆\n\n"
+    for i, u in enumerate(ranking_list, 1):
+        txt += f"{i}º | ID: `{u['id']}` - Wins: {u.get('wins', 0)}\n"
+    bot.reply_to(message, txt, parse_mode="Markdown")
 
-// Novo comando /aviso Unificado (PV + Grupos)
-bot.command('aviso', async (ctx) => {
-    if (!hasPerm(ctx.from.id)) return;
-    const msg = ctx.payload;
-    if (!msg) return ctx.reply("❌ Digite a mensagem após o comando. Ex: /aviso Ola a todos");
+# --- FILTRO ANTI-LOOP (O que corrige o erro da print) ---
+@bot.message_handler(func=lambda message: True)
+def filter_loop(message):
+    uid = message.from_user.id
+    # Se não for registrado, ignora qualquer mensagem que não seja comando
+    if not tem_acesso(uid):
+        return 
+    
+    # Resposta padrão para mensagens aleatórias de usuários registrados
+    if message.text.lower() == "oi":
+        bot.reply_to(message, "Salve! Digite /menu para ver o que posso fazer.")
 
-    let countU = 0, countG = 0;
-
-    // Enviar para Usuários (PV)
-    for (const uId in users) {
-        try { await bot.telegram.sendMessage(uId, `📢 *AVISO VOLX:*\n\n${msg}`, { parse_mode: 'Markdown' }); countU++; } catch (e) {}
-    }
-
-    // Enviar para Grupos
-    for (const gId of groups) {
-        try { await bot.telegram.sendMessage(gId, `📢 *AVISO GLOBAL:*\n\n${msg}`, { parse_mode: 'Markdown' }); countG++; } catch (e) {}
-    }
-
-    ctx.reply(`✅ *Aviso enviado!*\n👥 Privado: ${countU}\n🏘️ Grupos: ${countG}`, { parse_mode: 'Markdown' });
-});
-
-bot.command('users', (ctx) => {
-    if (!hasPerm(ctx.from.id)) return;
-    const total = Object.keys(users).length;
-    ctx.reply(`📊 *Estatísticas:* ${total} usuários registrados.`, { parse_mode: 'Markdown' });
-});
-
-bot.command('admin', (ctx) => { if (ctx.from.id === OWNER_ID) { admins[ctx.payload] = true; save(); ctx.reply("🛡️ Admin ADD."); } });
-bot.command('unadmin', (ctx) => { if (ctx.from.id === OWNER_ID) { delete admins[ctx.payload]; save(); ctx.reply("🛡️ Admin REMOVIDO."); } });
-
-bot.command('addgroup', (ctx) => {
-    if (ctx.from.id !== OWNER_ID) return;
-    ctx.reply("👑 Clique abaixo para me adicionar:", Markup.inlineKeyboard([[Markup.button.url("➕ Adicionar", `https://t.me/${ctx.botInfo.username}?startgroup=true`)]]));
-});
-
-// --- COMANDOS GERAIS (ANTERIORES) ---
-bot.start((ctx) => {
-    const id = ctx.from.id, ref = ctx.payload;
-    if (!users[id]) {
-        users[id] = { nome: ctx.from.first_name, ind: 0 };
-        if (ref && users[ref] && ref != id) users[ref].ind++;
-        save(); ctx.reply("🚀 *VOLX CHEATS:* Registro concluído!");
-    } else ctx.reply("✅ Você já está registrado.");
-});
-
-bot.command('ranking', (ctx) => {
-    const s = Object.entries(users).sort(([,a],[,b]) => b.ind - a.ind).slice(0, 10);
-    let m = "🏆 *RANKING DE INDICADORES*\n\n";
-    s.forEach(([id, u], i) => m += `${i==0?"🥇":"🔹"} *${u.nome}* — ${u.ind}\n`);
-    ctx.reply(m, { parse_mode: 'Markdown' });
-});
-
-bot.on('message', (ctx, next) => {
-    if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) { groups.push(ctx.chat.id); save(); }
-    return next();
-});
-
-bot.launch();
+print("🚀 Volx Bot rodando com todos os comandos!")
+bot.polling(non_stop=True)
 
