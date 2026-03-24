@@ -1,15 +1,16 @@
-const { Telegraf, session, Markup } = require('telegraf');
+const { Telegraf, session } = require('telegraf');
 const fs = require('fs');
 const http = require('http');
 
-// Servidor para o Render/Oracle não derrubar o bot
+// Servidor para o Render manter o bot vivo
 http.createServer((req, res) => { 
     res.writeHead(200); 
     res.end('VOLX_OK'); 
 }).listen(process.env.PORT || 8080);
 
-const BOT_TOKEN = '7629557685:AAF8M1A5-uU-yX6_F6W6Y5M8Z7X9Y4M3X1';
-const OWNER_ID = 6365451230; // Seu UID br7 modz
+const BOT_TOKEN = '8656194039:AAHO8K0IvqYND9zh0_rCVWGe1o3U270dSNw';
+const OWNER_ID = 7823943091; // Seu UID Owner atualizado
+
 const DB_FILE = 'users_db.json';
 const MODS_FILE = 'mods_db.json';
 const ADMINS_FILE = 'admins_db.json';
@@ -37,18 +38,18 @@ const save = () => {
 
 const hasPerm = (id) => (id === OWNER_ID || admins[id]);
 
-// --- 🛡️ TRAVA ANTI-FLOOD (CORREÇÃO DA PRINT) ---
+// --- 🛡️ TRAVA ANTI-LOOP (MATA O FLOOD) ---
 bot.use((ctx, next) => {
     const id = ctx.from?.id;
     const text = ctx.message?.text || "";
     
-    // Se não for o dono, não for admin e não estiver registrado
+    // Se não for o dono, nem admin, nem usuário registrado
     if (id && id !== OWNER_ID && !admins[id] && !users[id]) {
-        // SÓ responde se for o comando /start no privado
+        // Responde apenas ao /start no PV, ignora o resto
         if (text.startsWith('/start') && ctx.chat.type === 'private') {
-            return ctx.reply("❌ **ACESSO NEGADO.**\nFale com @Volxcheatsofc para registro.");
+            return ctx.reply("❌ **ACESSO NEGADO.**\nFale com @Volxcheatsofc.");
         }
-        return; // SILÊNCIO TOTAL para o resto (Evita o loop de acesso negado)
+        return; 
     }
     return next();
 });
@@ -77,7 +78,6 @@ bot.command('aviso', async (ctx) => {
 });
 
 bot.on('message', (ctx) => {
-    // Registra grupo automaticamente
     if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) { 
         groups.push(ctx.chat.id); 
         save(); 
@@ -91,5 +91,7 @@ bot.on('message', (ctx) => {
     }
 });
 
-bot.launch().then(() => console.log("🚀 Bot Volx (Telegraf) Online!"));
+bot.launch()
+    .then(() => console.log("🚀 Bot Volx Online com Novo Token!"))
+    .catch((err) => console.error("❌ Erro ao ligar:", err));
 
