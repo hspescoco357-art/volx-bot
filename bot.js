@@ -1,75 +1,95 @@
-aconst TeleBot = require('telebot');
+const { Telegraf, session, Markup } = require('telegraf');
 const fs = require('fs');
+const http = require('http');
 
-const TOKEN = '7629557685:AAF8M1A5-uU-yX6_F6W6Y5M8Z7X9Y4M3X1';
-const OWNER_ID = 6365451230;
+// Servidor para o Render/Oracle não derrubar o bot
+http.createServer((req, res) => { 
+    res.writeHead(200); 
+    res.end('VOLX_OK'); 
+}).listen(process.env.PORT || 8080);
 
-const bot = new TeleBot(TOKEN);
+const BOT_TOKEN = '7629557685:AAF8M1A5-uU-yX6_F6W6Y5M8Z7X9Y4M3X1';
+const OWNER_ID = 6365451230; // Seu UID br7 modz
+const DB_FILE = 'users_db.json';
+const MODS_FILE = 'mods_db.json';
+const ADMINS_FILE = 'admins_db.json';
+const GROUPS_FILE = 'groups_db.json';
 
-// --- BANCO DE DADOS ---
-let db = { users: [], groups: [] };
-if (fs.existsSync('users_db.json')) {
-    db = JSON.parse(fs.readFileSync('users_db.json'));
-}
+const bot = new Telegraf(BOT_TOKEN);
+bot.use(session());
 
-function saveDb() {
-    fs.writeFileSync('users_db.json', JSON.stringify(db, null, 2));
-}
+const loadJSON = (file, def) => {
+    try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : def; }
+    catch (e) { return def; }
+};
 
-function temAcesso(id) {
-    return id === OWNER_ID || db.users.some(u => u.id === id);
-}
+let users = loadJSON(DB_FILE, {});
+let mods = loadJSON(MODS_FILE, []);
+let admins = loadJSON(ADMINS_FILE, {});
+let groups = loadJSON(GROUPS_FILE, []);
 
-// --- FILTRO DE SEGURANÇA (MATA O LOOP) ---
-bot.on('*', (msg) => {
-    const uid = msg.from.id;
-    if (!temAcesso(uid)) {
-        if (msg.text && msg.text.startsWith('/start')) {
-            return bot.sendMessage(uid, "❌ **ACESSO NEGADO.**\nFale com @Volxcheatsofc.");
+const save = () => {
+    fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
+    fs.writeFileSync(MODS_FILE, JSON.stringify(mods, null, 2));
+    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2));
+    fs.writeFileSync(GROUPS_FILE, JSON.stringify(groups, null, 2));
+};
+
+const hasPerm = (id) => (id === OWNER_ID || admins[id]);
+
+// --- 🛡️ TRAVA ANTI-FLOOD (CORREÇÃO DA PRINT) ---
+bot.use((ctx, next) => {
+    const id = ctx.from?.id;
+    const text = ctx.message?.text || "";
+    
+    // Se não for o dono, não for admin e não estiver registrado
+    if (id && id !== OWNER_ID && !admins[id] && !users[id]) {
+        // SÓ responde se for o comando /start no privado
+        if (text.startsWith('/start') && ctx.chat.type === 'private') {
+            return ctx.reply("❌ **ACESSO NEGADO.**\nFale com @Volxcheatsofc para registro.");
         }
-        return; 
+        return; // SILÊNCIO TOTAL para o resto (Evita o loop de acesso negado)
     }
+    return next();
 });
 
 // --- COMANDOS ---
-bot.on('/start', (msg) => bot.sendMessage(msg.from.id, "🚀 **BOT VOLX ONLINE!**"));
-
-bot.on('/id', (msg) => bot.sendMessage(msg.from.id, `🆔 Seu ID: \`${msg.from.id}\``, {parseMode: 'Markdown'}));
-
-bot.on('/mods', (msg) => {
-    let m = "📂 **MODS VOLX:**\n\n• Regedit Mobile\n• Aimlock No Recoil\n• Painel v2";
-    return bot.sendMessage(msg.from.id, m, {parseMode: 'Markdown'});
+bot.command('comands', (ctx) => {
+    if (ctx.from.id !== OWNER_ID) return;
+    ctx.reply("👑 *MENU DONO VOLX*\n\n/admin /unadmin /aviso /users /groups /enviar /delmod /ranking /games /addgroup", { parse_mode: 'Markdown' });
 });
 
-// --- COMANDOS ADMIN ---
-bot.on(/^\/add (.+)$/, (msg, props) => {
-    if (msg.from.id !== OWNER_ID) return;
-    const newId = parseInt(props.match[1]);
-    if (!db.users.some(u => u.id === newId)) {
-        db.users.push({ id: newId, wins: 0 });
-        saveDb();
-        return bot.sendMessage(OWNER_ID, `✅ User ${newId} Adicionado!`);
-    }
+bot.command('users', (ctx) => {
+    if (!hasPerm(ctx.from.id)) return;
+    const total = Object.keys(users).length;
+    ctx.reply(`📊 *Estatísticas:* ${total} usuários registrados.`, { parse_mode: 'Markdown' });
 });
 
-bot.on('/avisogroups', (msg) => {
-    if (msg.from.id !== OWNER_ID) return;
-    const aviso = msg.text.split(' ').slice(1).join(' ');
-    if (!aviso) return bot.sendMessage(OWNER_ID, "Use: /avisogroups [mensagem]");
+bot.command('aviso', async (ctx) => {
+    if (!hasPerm(ctx.from.id)) return;
+    const msg = ctx.payload;
+    if (!msg) return ctx.reply("❌ Uso: /aviso [mensagem]");
     
-    db.groups.forEach(groupId => {
-        bot.sendMessage(groupId, `📢 **AVISO IMPORTANTE:**\n\n${aviso}`, {parseMode: 'Markdown'}).catch(e => console.log("Erro no grupo: " + groupId));
-    });
-    return bot.sendMessage(OWNER_ID, "✅ Aviso enviado aos grupos!");
+    let uCount = 0, gCount = 0;
+    for (const uId in users) { try { await bot.telegram.sendMessage(uId, `📢 *AVISO:* ${msg}`); uCount++; } catch(e){} }
+    for (const gId of groups) { try { await bot.telegram.sendMessage(gId, `📢 *AVISO:* ${msg}`); gCount++; } catch(e){} }
+    ctx.reply(`✅ Enviado para ${uCount} pessoas e ${gCount} grupos.`);
 });
 
-// Registrar grupos automaticamente
-bot.on('groupChatCreated', (msg) => {
-    if (!db.groups.includes(msg.chat.id)) {
-        db.groups.push(msg.chat.id);
-        saveDb();
+bot.on('message', (ctx) => {
+    // Registra grupo automaticamente
+    if (ctx.chat.type.includes('group') && !groups.includes(ctx.chat.id)) { 
+        groups.push(ctx.chat.id); 
+        save(); 
+    }
+    
+    const text = ctx.message.text?.toUpperCase() || "";
+    
+    if (text.startsWith('VOLX-')) {
+        const mod = mods.find(m => m.id === text);
+        if (mod) return ctx.reply(`📦 *MOD:* ${mod.desc}\n🔗 ${mod.cont}`);
     }
 });
 
-bot.start();
+bot.launch().then(() => console.log("🚀 Bot Volx (Telegraf) Online!"));
 
